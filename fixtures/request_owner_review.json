@@ -1,0 +1,19 @@
+{
+  "source_system": "email_gateway",
+  "source_event_id": "mail-20260809-0003",
+  "idempotency_key": "email_gateway:mail-20260809-0003",
+  "source_channel": "EMAIL",
+  "received_at": "2026-08-09T11:02:00Z",
+  "contact": {
+    "display_name": "Sample Cafe C",
+    "phone": "+1-555-0103",
+    "email": "cafe.c@example.com"
+  },
+  "location_type": "COMMERCIAL",
+  "address": "3 Sample Street, Riverton (synthetic)",
+  "units": [
+    { "appliance_type": "CONVECTION_OVEN", "problem": "Fan does not start" }
+  ],
+  "availability": "Mondays before opening",
+  "notes": "Synthetic example: commercial equipment -> expected OWNER_REVIEW (see docs/SPEC.md, section 6.1)."
+}

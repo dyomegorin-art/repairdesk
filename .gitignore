@@ -1,0 +1,11 @@
+.env
+*.log
+node_modules/
+__pycache__/
+.venv/
+dist/
+.DS_Store
+*.db
+.pytest_cache/
+*.egg-info/
+.~lock.*

@@ -1,0 +1,15 @@
+{
+  "source_system": "website_form",
+  "source_event_id": "web-20260809-0002",
+  "source_channel": "WEB",
+  "received_at": "2026-08-09T10:20:00Z",
+  "contact": {
+    "display_name": "Sample Customer B",
+    "phone": "+1-555-0102"
+  },
+  "location_type": "RESIDENTIAL",
+  "units": [
+    { "appliance_type": "DRYER", "problem": "No heat" }
+  ],
+  "notes": "Synthetic example: idempotency_key is intentionally absent -> expect 400 missing_identifier."
+}

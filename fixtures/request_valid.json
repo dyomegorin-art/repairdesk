@@ -1,0 +1,23 @@
+{
+  "source_system": "website_form",
+  "source_event_id": "web-20260809-0001",
+  "idempotency_key": "website_form:web-20260809-0001",
+  "source_channel": "WEB",
+  "received_at": "2026-08-09T10:15:00Z",
+  "contact": {
+    "display_name": "Sample Customer A",
+    "phone": "+1-555-0101",
+    "email": "customer.a@example.com"
+  },
+  "location_type": "RESIDENTIAL",
+  "address": "12 Example Lane, Riverton (synthetic)",
+  "units": [
+    {
+      "appliance_type": "WASHER",
+      "brand": "ExampleBrand",
+      "problem": "Does not drain, stops mid-cycle"
+    }
+  ],
+  "availability": "Weekdays 09:00-12:00",
+  "notes": "Synthetic example. Prefers a call before arrival."
+}

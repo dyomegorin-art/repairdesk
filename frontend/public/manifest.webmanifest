@@ -1,0 +1,9 @@
+{
+  "name": "RepairDesk",
+  "short_name": "RepairDesk",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f5",
+  "theme_color": "#1f4e5f",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
