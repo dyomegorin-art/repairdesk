@@ -10,6 +10,27 @@ const STATUS_LABEL: Record<string, string> = {
   READY_TO_MATCH: "Готова к подбору",
 };
 
+const ELIGIBILITY_LABEL: Record<string, string> = {
+  ELIGIBLE: "Допущена",
+  CONDITIONAL: "С условиями",
+  OWNER_REVIEW: "Решает владелец",
+  LICENSE_HOLD: "Ждёт допуска мастера",
+  DECLINE: "Отказ",
+  EMERGENCY_STOP: "Аварийная остановка",
+};
+
+function auditTitle(a: AuditEntry): string {
+  if (a.event_type === "WORKER_COMMAND_COMPLETED" && a.detail.command === "EVALUATE_ELIGIBILITY") {
+    return "Worker: допуск оценён";
+  }
+  return EVENT_LABEL[a.event_type] ?? a.event_type;
+}
+
+function reasonCodes(a: AuditEntry): string {
+  const r = a.detail.reasons;
+  return Array.isArray(r) && r.length > 0 ? r.join(", ") : "";
+}
+
 const EVENT_LABEL: Record<string, string> = {
   DELIVERY_RECEIVED: "Доставка получена",
   INTAKE_EVENT_CREATED: "Событие приёма создано",
@@ -166,7 +187,7 @@ function CaseDetail(props: { identity: string; me: Me; caseId: string; onChanged
       <dl>
         <dt>Фаза</dt><dd>{c.case_phase}</dd>
         <dt>Статус</dt><dd>{STATUS_LABEL[c.intake_status]}</dd>
-        <dt>Допуск</dt><dd>{c.eligibility_result ?? "не оценивался (v0.1)"}</dd>
+        <dt>Допуск</dt><dd>{c.eligibility_result ? `${ELIGIBILITY_LABEL[c.eligibility_result] ?? c.eligibility_result} (${c.eligibility_result})` : "ещё не оценена"}</dd>
         <dt>Объект</dt><dd>{c.location_type ?? "—"}</dd>
         <dt>Источник</dt><dd>{c.source_attribution ?? "—"}</dd>
         <dt>Мастер</dt><dd>{c.assigned_technician_id ?? "не назначен"}</dd>
@@ -188,8 +209,9 @@ function CaseDetail(props: { identity: string; me: Me; caseId: string; onChanged
       <ol className="timeline">
         {audit.map((a) => (
           <li key={a.id}>
-            <strong>{EVENT_LABEL[a.event_type] ?? a.event_type}</strong>
+            <strong>{auditTitle(a)}</strong>
             <span className="meta">{a.actor} · {time(a.created_at)}</span>
+            {reasonCodes(a) && <span className="meta">{reasonCodes(a)}</span>}
           </li>
         ))}
       </ol>
