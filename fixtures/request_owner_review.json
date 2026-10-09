@@ -11,6 +11,7 @@
   },
   "location_type": "COMMERCIAL",
   "address": "3 Sample Street, Riverton (synthetic)",
+  "district": "Old Mill",
   "units": [
     { "appliance_type": "CONVECTION_OVEN", "problem": "Fan does not start" }
   ],

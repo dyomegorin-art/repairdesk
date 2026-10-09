@@ -64,6 +64,24 @@ for _ in $(seq 1 15); do
 done
 curl -s "$U/api/cases/$CASE/audit" -H "$H" | grep -q WORKER_COMMAND_COMPLETED || fail "worker did not complete"
 
+# eligibility is evaluated by the worker: washer, residential, primary area -> ELIGIBLE
+for _ in $(seq 1 15); do
+  curl -s "$U/api/cases/$CASE" -H "$H" | grep -q '"eligibility_result":"ELIGIBLE"' && break
+  sleep 1
+done
+curl -s "$U/api/cases/$CASE" -H "$H" | grep -q '"eligibility_result":"ELIGIBLE"' || fail "eligibility not evaluated"
+
+# emergency signal is stopped by the rules, and the case is not closed or declined
+R2=$(post "$KEY" fixtures/request_emergency.json)
+CASE2=$(echo "$R2" | python3 -c "import sys,json;print(json.load(sys.stdin)['case_id'])")
+for _ in $(seq 1 15); do
+  curl -s "$U/api/cases/$CASE2" -H "$H" | grep -q '"eligibility_result":"EMERGENCY_STOP"' && break
+  sleep 1
+done
+D2=$(curl -s "$U/api/cases/$CASE2" -H "$H")
+echo "$D2" | grep -q '"eligibility_result":"EMERGENCY_STOP"' || fail "emergency not stopped: $D2"
+echo "$D2" | grep -q '"case_phase":"INTAKE"' || fail "emergency case must stay in INTAKE"
+
 # committed state survives an API restart
 docker compose restart api >/dev/null
 for _ in $(seq 1 30); do [ "$(code "$U/health")" = 200 ] && break; sleep 1; done

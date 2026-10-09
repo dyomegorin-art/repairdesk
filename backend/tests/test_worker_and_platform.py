@@ -1,10 +1,11 @@
+import json
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, inspect, select
+from sqlalchemy import create_engine, func, inspect, select
 
 from app.config import Settings
 from app.main import create_app
@@ -17,6 +18,7 @@ from app.models import (
 )
 from app.worker import process_pending
 from tests.conftest import (
+    FIXTURES,
     SEEDED_CASES,
     as_identity,
     build_app,
@@ -26,16 +28,57 @@ from tests.conftest import (
 )
 
 
+def count_rows(session, model):
+    return session.scalar(select(func.count()).select_from(model))
+
+
 def test_worker_completes_safe_command_and_audits(client, app, payload):
     case_id = post_intake(client, payload).json()["case_id"]
     with app.state.sessionmaker() as s:
-        assert process_pending(s) == 1
-        cmd = s.scalars(select(OutboxCommand)).one()
-        assert cmd.status == "DONE"
+        assert process_pending(s) == 2  # VERIFY_INTAKE_RECORD + EVALUATE_ELIGIBILITY
+        assert {c.status for c in s.scalars(select(OutboxCommand))} == {"DONE"}
         done = s.scalars(select(AuditEvent).where(
-            AuditEvent.event_type == "WORKER_COMMAND_COMPLETED")).one()
+            AuditEvent.event_type == "WORKER_COMMAND_COMPLETED",
+            AuditEvent.detail.contains("VERIFY_INTAKE_RECORD"))).one()
         assert done.case_id == case_id
         assert '"missing_fields": []' in done.detail
+
+
+def _eligibility_after_worker(client, app, fixture_name):
+    payload = json.loads((FIXTURES / fixture_name).read_text())
+    case_id = post_intake(client, payload).json()["case_id"]
+    with app.state.sessionmaker() as s:
+        process_pending(s)
+        case = s.get(RepairCase, case_id)
+        audit_ev = s.scalars(select(AuditEvent).where(
+            AuditEvent.case_id == case_id,
+            AuditEvent.detail.contains("EVALUATE_ELIGIBILITY"))).one()
+        return case.eligibility_result, audit_ev.detail
+
+
+@pytest.mark.parametrize("fixture_name,expected,code", [
+    ("request_valid.json", "ELIGIBLE", None),
+    ("request_owner_review.json", "OWNER_REVIEW", "COMMERCIAL_LOCATION"),
+    ("request_emergency.json", "EMERGENCY_STOP", "HAZARD_GAS_SMELL"),
+])
+def test_worker_stores_eligibility_and_audits_reasons(
+    client, app, fixture_name, expected, code
+):
+    result, detail = _eligibility_after_worker(client, app, fixture_name)
+    assert result == expected
+    if code:
+        assert code in detail
+
+
+def test_eligibility_result_is_visible_to_the_dispatcher_and_triggers_nothing_else(client, app):
+    payload = json.loads((FIXTURES / "request_emergency.json").read_text())
+    case_id = post_intake(client, payload).json()["case_id"]
+    with app.state.sessionmaker() as s:
+        process_pending(s)
+        assert count_rows(s, OutboxCommand) == 2  # no follow-up commands: advisory only
+    detail = client.get(f"/api/cases/{case_id}", headers=as_identity("disp-1")).json()
+    assert detail["eligibility_result"] == "EMERGENCY_STOP"
+    assert detail["case_phase"] == "INTAKE"  # the case is not declined or closed automatically
 
 
 def test_worker_failure_creates_visible_issue_and_audit(client, app):

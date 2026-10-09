@@ -11,6 +11,7 @@
   },
   "location_type": "RESIDENTIAL",
   "address": "12 Example Lane, Riverton (synthetic)",
+  "district": "North Quay",
   "units": [
     {
       "appliance_type": "WASHER",

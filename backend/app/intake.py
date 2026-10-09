@@ -130,6 +130,7 @@ def process_delivery(session: Session, delivery: RawInboundDelivery) -> IntakeRe
     delivery.intake_event_id = event.id
     session.add(WorkItem(case_id=case.case_id, kind="REVIEW_INTAKE"))
     session.add(OutboxCommand(command="VERIFY_INTAKE_RECORD", case_id=case.case_id))
+    session.add(OutboxCommand(command="EVALUATE_ELIGIBILITY", case_id=case.case_id))
 
     audit(session, "INTAKE_EVENT_CREATED", SYSTEM_ACTOR, case_id=case.case_id,
           intake_event_id=event.id, delivery_id=delivery.id)

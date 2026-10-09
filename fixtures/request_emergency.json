@@ -1,0 +1,19 @@
+{
+  "source_system": "phone_gateway",
+  "source_event_id": "call-20260809-0004",
+  "idempotency_key": "phone_gateway:call-20260809-0004",
+  "source_channel": "PHONE",
+  "received_at": "2026-08-09T12:30:00Z",
+  "contact": {
+    "display_name": "Sample Customer D",
+    "phone": "+1-555-0104"
+  },
+  "location_type": "RESIDENTIAL",
+  "address": "7 Sample Court, Riverton (synthetic)",
+  "district": "Greenfield",
+  "units": [
+    { "appliance_type": "RANGE", "power_source": "GAS", "problem": "Smell of gas near the stove" }
+  ],
+  "hazards": ["GAS_SMELL"],
+  "notes": "Synthetic example: emergency signal -> expected EMERGENCY_STOP; nothing is sent automatically."
+}
