@@ -27,7 +27,7 @@ from app.db import make_engine, make_sessionmaker
 from app.intake import process_delivery_safely, store_raw_delivery
 from app.models import AuditEvent, Identity, RepairCase, SystemIssue
 
-security_log = logging.getLogger("repairhub.security")
+security_log = logging.getLogger("repairdesk.security")
 
 KEY_HEADER = "X-Intake-Webhook-Key"
 ACTIVE_PHASES = ("ACCEPTED", "ACTIVE")
@@ -56,7 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     settings.validate_startup()
 
-    app = FastAPI(title="RepairHub Platform Frame", version="0.1.0")
+    app = FastAPI(title="RepairDesk Platform Frame", version="0.1.0")
     engine = make_engine(settings.database_url)
     app.state.settings = settings
     app.state.engine = engine

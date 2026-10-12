@@ -7,7 +7,7 @@ const STATUS_LABEL: Record<string, string> = {
   NEW: "Новая",
   NEEDS_INFORMATION: "Нужны данные",
   READY_FOR_REVIEW: "Готова к проверке",
-  READY_TO_MATCH: "Готова к подбору",
+  READY_TO_SCHEDULE: "Готова к записи",
 };
 
 const ELIGIBILITY_LABEL: Record<string, string> = {

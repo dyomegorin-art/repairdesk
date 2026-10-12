@@ -1,7 +1,7 @@
 [project]
-name = "repairhub"
+name = "repairdesk"
 version = "0.1.0"
-description = "RepairHub Platform Frame v0.1 - synthetic reference flow"
+description = "RepairDesk Platform Frame v0.1 - synthetic reference flow"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.110",

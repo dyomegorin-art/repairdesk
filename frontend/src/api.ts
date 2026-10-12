@@ -1,4 +1,4 @@
-export type IntakeStatus = "NEW" | "NEEDS_INFORMATION" | "READY_FOR_REVIEW" | "READY_TO_MATCH";
+export type IntakeStatus = "NEW" | "NEEDS_INFORMATION" | "READY_FOR_REVIEW" | "READY_TO_SCHEDULE";
 
 export interface Unit {
   appliance_type?: string;

@@ -10,7 +10,7 @@ if [ -f .env ] && [ "${CI:-}" != "true" ]; then
 fi
 
 # Isolated Compose project: never touches the developer's own containers or volumes.
-export COMPOSE_PROJECT_NAME=repairhub-smoke
+export COMPOSE_PROJECT_NAME=repairdesk-smoke
 export API_PORT=18000   # does not clash with a dev stack on 8000
 docker compose down -v >/dev/null 2>&1 || true
 

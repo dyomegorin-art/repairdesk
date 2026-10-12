@@ -120,7 +120,7 @@ def main() -> None:
             with factory() as session:
                 process_pending(session)
         except SQLAlchemyError as exc:  # DB not ready or temporarily down: keep polling
-            logging.getLogger("repairhub.worker").warning("poll failed: %s", type(exc).__name__)
+            logging.getLogger("repairdesk.worker").warning("poll failed: %s", type(exc).__name__)
         time.sleep(2)
 
 
