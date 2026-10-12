@@ -209,3 +209,38 @@ def test_unexpected_error_marks_the_delivery_failed_and_is_visible(client, app, 
     # the source retries once the fault is gone: the same event is then accepted normally
     monkeypatch.undo()
     assert post_intake(client, payload).json()["result"] == "accepted"
+
+
+def test_same_content_in_a_different_layout_is_still_a_duplicate(client, payload):
+    first = post_intake(client, payload).json()
+    reordered = json.dumps(dict(reversed(list(payload.items()))), indent=4)  # other order/spacing
+    second = post_intake(client, reordered)
+    assert second.status_code == 202
+    assert second.json() == {"result": "duplicate_ignored", "case_id": first["case_id"]}
+
+
+def test_same_key_with_different_content_is_a_visible_conflict(client, app, payload):
+    first = post_intake(client, payload).json()
+    changed = json.loads(json.dumps(payload))
+    changed["units"][0]["problem"] = "A completely different problem"
+    r = post_intake(client, changed)
+    assert r.status_code == 409
+    assert r.json() == {"error": "idempotency_conflict", "case_id": first["case_id"]}
+
+    assert count(app, IntakeEvent) == 1                       # nothing new was created
+    assert count(app, RepairCase) == SEEDED_CASES + 1
+    with app.state.sessionmaker() as s:
+        deliveries = s.scalars(select(RawInboundDelivery).order_by(RawInboundDelivery.id)).all()
+        assert [d.parse_status for d in deliveries] == ["OK", "CONFLICT"]   # kept, not lost
+        case = s.get(RepairCase, first["case_id"])
+        assert "completely different" not in case.units_json                # original untouched
+        issue = s.scalars(select(SystemIssue)).one()
+        assert issue.kind == "IDEMPOTENCY_CONFLICT"
+    timeline = client.get(f"/api/cases/{first['case_id']}/audit",
+                          headers=as_identity("disp-1")).json()
+    assert "IDEMPOTENCY_CONFLICT" in [e["event_type"] for e in timeline]
+    assert [i["kind"] for i in client.get(
+        "/api/issues", headers=as_identity("owner-1")).json()] == ["IDEMPOTENCY_CONFLICT"]
+
+    # the original content, replayed again, is still just a duplicate
+    assert post_intake(client, payload).json()["result"] == "duplicate_ignored"

@@ -2,6 +2,7 @@
 
 Deterministic code only: business rules live in code (docs/SPEC.md, section 2.2).
 """
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -67,6 +68,38 @@ def _case_for_event(session: Session, event: IntakeEvent) -> RepairCase:
     ).one()
 
 
+def payload_fingerprint(raw: bytes) -> str:
+    """Hash of the canonical JSON, so whitespace and key order do not matter."""
+    canonical = json.dumps(json.loads(raw), sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _resolve_existing(session: Session, delivery: RawInboundDelivery, event: IntakeEvent):
+    """The key is already known: the same content is a harmless duplicate, different content
+    under the same key is a conflict that must not be silently swallowed."""
+    first = session.get(RawInboundDelivery, event.first_delivery_id)
+    if first is not None and payload_fingerprint(first.raw_body) != payload_fingerprint(
+        delivery.raw_body
+    ):
+        return _conflict(session, delivery, event)
+    return _duplicate(session, delivery, event)
+
+
+def _conflict(session: Session, delivery: RawInboundDelivery, event: IntakeEvent):
+    case = _case_for_event(session, event)
+    delivery.parse_status = "CONFLICT"
+    delivery.intake_event_id = event.id
+    audit(session, "IDEMPOTENCY_CONFLICT", SYSTEM_ACTOR, case_id=case.case_id,
+          delivery_id=delivery.id, intake_event_id=event.id)
+    session.add(SystemIssue(
+        kind="IDEMPOTENCY_CONFLICT",
+        detail=f"delivery {delivery.id} reuses the key of event {event.id} with different content",
+    ))
+    session.commit()
+    return IntakeResult(409, {"error": "idempotency_conflict", "case_id": case.case_id})
+
+
 def _duplicate(session: Session, delivery: RawInboundDelivery, event: IntakeEvent):
     case = _case_for_event(session, event)
     delivery.parse_status = "OK"
@@ -104,7 +137,7 @@ def process_delivery(session: Session, delivery: RawInboundDelivery) -> IntakeRe
 
     existing = _find_event(session, payload["source_system"], payload["idempotency_key"])
     if existing:
-        return _duplicate(session, delivery, existing)
+        return _resolve_existing(session, delivery, existing)
 
     event = IntakeEvent(
         source_system=payload["source_system"],
@@ -123,7 +156,7 @@ def process_delivery(session: Session, delivery: RawInboundDelivery) -> IntakeRe
         existing = _find_event(session, payload["source_system"], payload["idempotency_key"])
         if stored is None or existing is None:
             raise  # a unique violation without a winner would be a real bug: surface it
-        return _duplicate(session, stored, existing)
+        return _resolve_existing(session, stored, existing)
 
     case = RepairCase(
         intake_event_id=event.id,
