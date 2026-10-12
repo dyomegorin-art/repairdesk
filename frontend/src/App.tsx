@@ -39,6 +39,7 @@ const EVENT_LABEL: Record<string, string> = {
   DUPLICATE_IGNORED: "Повтор проигнорирован",
   INTAKE_STATUS_CHANGED: "Статус изменён",
   WORKER_COMMAND_COMPLETED: "Worker: проверка записи",
+  WORKER_COMMAND_RETRY: "Worker: повтор запланирован",
   WORKER_COMMAND_FAILED: "Worker: сбой",
   ACCESS_DENIED: "Доступ отклонён",
 };
