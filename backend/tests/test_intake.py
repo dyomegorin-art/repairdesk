@@ -2,6 +2,7 @@ import json
 import logging
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.models import (
@@ -130,3 +131,16 @@ def test_hostile_bodies_are_kept_unchanged_and_rejected_with_400(client, app, bo
         assert delivery.raw_body == body
         assert delivery.parse_status == "INVALID_JSON"
     assert count(app, IntakeEvent) == 0
+
+
+@pytest.mark.parametrize("raw_key", ["é".encode("latin-1"), "ключ".encode(), b"\xff\xfe"])
+def test_non_ascii_key_header_is_401_not_500(app, raw_key):
+    # httpx cannot send a non-ASCII header as str, so the raw header bytes are used.
+    headers = [(b"content-type", b"application/json"), (b"x-intake-webhook-key", raw_key)]
+    r = TestClient(app, raise_server_exceptions=False).post(
+        "/webhooks/request_in", content=b"{}", headers=headers
+    )
+    assert r.status_code == 401
+    assert r.json() == {"error": "unauthorized"}
+    assert count(app, RawInboundDelivery) == 0
+

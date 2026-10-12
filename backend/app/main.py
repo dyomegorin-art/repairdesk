@@ -77,7 +77,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         supplied = request.headers.get(KEY_HEADER, "")
         expected = settings.intake_webhook_key
         # Fail closed: an unset server key rejects everything. Body is never read here.
-        if not expected or not supplied or not hmac.compare_digest(supplied, expected):
+        # Compare bytes: compare_digest raises TypeError on non-ASCII str, which would be a 500.
+        if (
+            not expected
+            or not supplied
+            or not hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+        ):
             security_log.warning("webhook rejected: missing_or_invalid_key")
             return JSONResponse({"error": "unauthorized"}, status_code=401)
 
