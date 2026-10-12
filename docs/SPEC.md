@@ -53,7 +53,10 @@ Backend: Python, FastAPI, Pydantic. Хранение: PostgreSQL, SQLAlchemy 2.x
 | Верный ключ, поля нарушают схему (тип, длина, допустимое значение) | `400` | `invalid_payload` + пути полей, без значений | только `RawInboundDelivery` со статусом `INVALID_PAYLOAD` |
 | Непредвиденная ошибка обработки | `500` | `internal_error` | доставка помечена `FAILED`, создан `SystemIssue` и событие `DELIVERY_FAILED` (только класс ошибки, без данных клиента) |
 | Новое событие | `202` | `accepted` + `case_id` | доставка, событие, кейс, задача, аудит |
-| Повтор | `202` | `duplicate_ignored` + `case_id` | новая доставка со ссылкой на существующее событие |
+| Повтор с тем же содержимым | `202` | `duplicate_ignored` + `case_id` | новая доставка со ссылкой на существующее событие |
+| Тот же ключ, но другое содержимое | `409` | `idempotency_conflict` + `case_id` | доставка со статусом `CONFLICT`, событие аудита `IDEMPOTENCY_CONFLICT` и видимый `SystemIssue`; существующий кейс не меняется, нового нет |
+
+Содержимое сравнивается по хешу канонического JSON (порядок ключей и пробелы не важны), поэтому источник при повторе должен слать то же самое событие, а не новую версию под старым ключом.
 
 ### 2.4 Правило «кейс — одно целое»
 
@@ -128,6 +131,7 @@ stateDiagram-v2
 27. Заголовок ключа с не-ASCII символами даёт `401`, а не `500`.
 28. Несколько worker не берут одну команду и не блокируют друг друга: заблокированная команда пропускается, каждая выполняется ровно один раз.
 29. Временный сбой команды worker повторяется с растущей паузой (30, 60, 120 с и далее) и не раньше срока; после 5 неудач команда становится `FAILED` с одним видимым `SystemIssue`, детерминированные ошибки не повторяются, тексты ошибок не содержат данных клиента.
+30. Повтор с тем же ключом и другим содержимым даёт `409 idempotency_conflict` и видимый `SystemIssue`, не создаёт кейс и не меняет существующий; тот же контент в другом порядке ключей остаётся обычным дублем.
 
 ### 2.8 Запрещено в v0.1
 
@@ -145,7 +149,7 @@ stateDiagram-v2
 
 | Сущность | Назначение |
 | --- | --- |
-| `RawInboundDelivery` | Физическая аутентифицированная доставка: сырое тело (`BYTEA`, байт в байт), статус разбора (`PENDING`, `OK`, `INVALID_JSON`, `MISSING_IDENTIFIER`, `INVALID_PAYLOAD`, `FAILED`) |
+| `RawInboundDelivery` | Физическая аутентифицированная доставка: сырое тело (`BYTEA`, байт в байт), статус разбора (`PENDING`, `OK`, `INVALID_JSON`, `MISSING_IDENTIFIER`, `INVALID_PAYLOAD`, `CONFLICT`, `FAILED`) |
 | `IntakeEvent` | Логическое событие, уникально по `(source_system, idempotency_key)` |
 | `RepairCase` | Ядро: одна история для заявки и работы; `assigned_technician_id` — назначенный мастер |
 | `WorkItem` | Следующее требуемое действие персонала |
@@ -157,7 +161,7 @@ stateDiagram-v2
 
 Перечисления: `case_phase` (см. 2.4); `intake_status`: `NEW`, `NEEDS_INFORMATION`, `READY_FOR_REVIEW`, `READY_TO_SCHEDULE`; `eligibility`: `ELIGIBLE`, `CONDITIONAL`, `OWNER_REVIEW`, `LICENSE_HOLD`, `DECLINE`, `EMERGENCY_STOP`.
 
-События аудита: `DELIVERY_RECEIVED`, `DELIVERY_REJECTED_INVALID`, `DELIVERY_FAILED`, `INTAKE_EVENT_CREATED`, `DUPLICATE_IGNORED`, `CASE_CREATED`, `WORK_ITEM_CREATED`, `INTAKE_STATUS_CHANGED`, `ACCESS_DENIED`, `WORKER_COMMAND_COMPLETED`, `WORKER_COMMAND_RETRY`, `WORKER_COMMAND_FAILED`.
+События аудита: `DELIVERY_RECEIVED`, `DELIVERY_REJECTED_INVALID`, `DELIVERY_FAILED`, `INTAKE_EVENT_CREATED`, `DUPLICATE_IGNORED`, `IDEMPOTENCY_CONFLICT`, `CASE_CREATED`, `WORK_ITEM_CREATED`, `INTAKE_STATUS_CHANGED`, `ACCESS_DENIED`, `WORKER_COMMAND_COMPLETED`, `WORKER_COMMAND_RETRY`, `WORKER_COMMAND_FAILED`.
 
 ## 4. Ключевые решения и почему
 
