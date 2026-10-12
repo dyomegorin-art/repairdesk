@@ -10,9 +10,10 @@ from app.models import (
     IntakeEvent,
     RawInboundDelivery,
     RepairCase,
+    SystemIssue,
     WorkItem,
 )
-from tests.conftest import SEEDED_AUDIT_EVENTS, SEEDED_CASES, count, post_intake
+from tests.conftest import SEEDED_AUDIT_EVENTS, SEEDED_CASES, as_identity, count, post_intake
 
 
 def test_valid_intake_accepted_and_case_in_intake(client, app, payload):
@@ -144,3 +145,67 @@ def test_non_ascii_key_header_is_401_not_500(app, raw_key):
     assert r.json() == {"error": "unauthorized"}
     assert count(app, RawInboundDelivery) == 0
 
+
+
+MARKER = "PII-MARKER-should-never-be-echoed"
+
+
+@pytest.mark.parametrize("mutate,field", [
+    (lambda p: p.update(location_type="RESIDENTIAL_APARTMENT"), "location_type"),
+    (lambda p: p.update(location_type="residential"), "location_type"),
+    (lambda p: p.update(source_system="x" * 200), "source_system"),
+    (lambda p: p["contact"].update(display_name={"a": MARKER}), "contact.display_name"),
+    (lambda p: p["contact"].update(phone=MARKER * 10), "contact.phone"),
+    (lambda p: p.update(units="not-a-list"), "units"),
+    (lambda p: p.update(units=[MARKER]), "units.0"),
+    (lambda p: p["units"][0].update(power_source="NUCLEAR"), "units.0.power_source"),
+    (lambda p: p.update(hazards=MARKER), "hazards"),
+    (lambda p: p.update(notes=MARKER * 400), "notes"),
+])
+def test_invalid_fields_are_400_and_the_delivery_is_kept(client, app, payload, mutate, field):
+    mutate(payload)
+    r = post_intake(client, payload)
+    assert r.status_code == 400
+    assert r.json()["error"] == "invalid_payload"
+    assert field in r.json()["fields"]
+    assert MARKER not in r.text  # values are never echoed back
+    with app.state.sessionmaker() as s:
+        delivery = s.scalars(select(RawInboundDelivery)).one()
+        assert delivery.parse_status == "INVALID_PAYLOAD"
+        rejected = s.scalars(select(AuditEvent).where(
+            AuditEvent.event_type == "DELIVERY_REJECTED_INVALID")).one()
+        assert MARKER not in rejected.detail
+    assert count(app, IntakeEvent) == 0
+    assert count(app, RepairCase) == SEEDED_CASES
+
+
+def test_unknown_extra_fields_are_accepted(client, payload):
+    payload["vendor_specific"] = {"anything": [1, 2, 3]}
+    payload["units"][0]["serial_hint"] = "abc"
+    assert post_intake(client, payload).status_code == 202
+
+
+def test_unexpected_error_marks_the_delivery_failed_and_is_visible(client, app, payload,
+                                                                    monkeypatch):
+    import app.intake as intake
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError(f"database said: {MARKER}")
+
+    monkeypatch.setattr(intake, "_find_event", boom)
+    r = post_intake(client, payload)
+    assert r.status_code == 500
+    assert r.json() == {"error": "internal_error"}
+    with app.state.sessionmaker() as s:
+        assert s.scalars(select(RawInboundDelivery)).one().parse_status == "FAILED"
+        issue = s.scalars(select(SystemIssue)).one()
+        assert issue.kind == "INTAKE_PROCESSING_FAILED"
+        assert "RuntimeError" in issue.detail and MARKER not in issue.detail
+        assert MARKER not in s.scalars(select(AuditEvent).where(
+            AuditEvent.event_type == "DELIVERY_FAILED")).one().detail
+    listed = client.get("/api/issues", headers=as_identity("owner-1")).json()
+    assert [i["kind"] for i in listed] == ["INTAKE_PROCESSING_FAILED"]
+
+    # the source retries once the fault is gone: the same event is then accepted normally
+    monkeypatch.undo()
+    assert post_intake(client, payload).json()["result"] == "accepted"

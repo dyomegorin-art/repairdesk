@@ -24,7 +24,7 @@ from app.auth import (
 )
 from app.config import Settings
 from app.db import make_engine, make_sessionmaker
-from app.intake import process_delivery, store_raw_delivery
+from app.intake import process_delivery_safely, store_raw_delivery
 from app.models import AuditEvent, Identity, RepairCase, SystemIssue
 
 security_log = logging.getLogger("repairhub.security")
@@ -88,7 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         raw = await request.body()
         delivery = store_raw_delivery(session, raw)
-        result = process_delivery(session, delivery)
+        result = process_delivery_safely(session, delivery.id)
         return JSONResponse(result.body, status_code=result.http_status)
 
     @app.get("/api/queues/new-requests")

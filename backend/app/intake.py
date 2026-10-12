@@ -3,8 +3,10 @@
 Deterministic code only: business rules live in code (docs/SPEC.md, section 2.2).
 """
 import json
+import logging
 from dataclasses import dataclass
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -15,11 +17,14 @@ from app.models import (
     OutboxCommand,
     RawInboundDelivery,
     RepairCase,
+    SystemIssue,
     WorkItem,
 )
+from app.schemas import IntakePayload
 
 REQUIRED_IDENTIFIERS = ("source_system", "source_event_id", "idempotency_key")
 SYSTEM_ACTOR = "system:ingress"
+log = logging.getLogger("repairdesk.intake")
 
 
 @dataclass
@@ -40,8 +45,9 @@ def store_raw_delivery(session: Session, raw: bytes) -> RawInboundDelivery:
 
 def _reject(session: Session, delivery: RawInboundDelivery, status: str, body: dict):
     delivery.parse_status = status
+    detail = {k: v for k, v in body.items() if k in ("field", "fields")}
     audit(session, "DELIVERY_REJECTED_INVALID", SYSTEM_ACTOR,
-          delivery_id=delivery.id, reason=status, **{k: v for k, v in body.items() if k == "field"})
+          delivery_id=delivery.id, reason=status, **detail)
     session.commit()
     return IntakeResult(400, body)
 
@@ -88,6 +94,14 @@ def process_delivery(session: Session, delivery: RawInboundDelivery) -> IntakeRe
                 {"error": "missing_identifier", "field": field},
             )
 
+    try:
+        parsed = IntakePayload.model_validate(payload)
+    except ValidationError as exc:
+        # Report only where the problem is, never the submitted values (they may be PII).
+        fields = sorted({".".join(str(p) for p in e["loc"]) for e in exc.errors()})
+        return _reject(session, delivery, "INVALID_PAYLOAD",
+                       {"error": "invalid_payload", "fields": fields})
+
     existing = _find_event(session, payload["source_system"], payload["idempotency_key"])
     if existing:
         return _duplicate(session, delivery, existing)
@@ -111,17 +125,13 @@ def process_delivery(session: Session, delivery: RawInboundDelivery) -> IntakeRe
             raise  # a unique violation without a winner would be a real bug: surface it
         return _duplicate(session, stored, existing)
 
-    raw_contact = payload.get("contact")
-    contact: dict = raw_contact if isinstance(raw_contact, dict) else {}
-    raw_units = payload.get("units")
-    units: list = raw_units if isinstance(raw_units, list) else []
     case = RepairCase(
         intake_event_id=event.id,
-        source_attribution=payload["source_system"],
-        contact_display_name=contact.get("display_name"),
-        contact_phone=contact.get("phone"),
-        location_type=payload.get("location_type"),
-        units_json=json.dumps(units),
+        source_attribution=parsed.source_system,
+        contact_display_name=parsed.contact.display_name if parsed.contact else None,
+        contact_phone=parsed.contact.phone if parsed.contact else None,
+        location_type=parsed.location_type,
+        units_json=json.dumps([u.model_dump(exclude_none=True) for u in parsed.units or []]),
     )
     session.add(case)
     session.flush()
@@ -138,3 +148,29 @@ def process_delivery(session: Session, delivery: RawInboundDelivery) -> IntakeRe
     audit(session, "WORK_ITEM_CREATED", SYSTEM_ACTOR, case_id=case.case_id, kind="REVIEW_INTAKE")
     session.commit()
     return IntakeResult(202, {"result": "accepted", "case_id": case.case_id})
+
+
+def process_delivery_safely(session: Session, delivery_id: int) -> IntakeResult:
+    """Run the pipeline; an unexpected error must never leave a delivery stuck in PENDING.
+
+    The raw delivery is already committed, so on failure it is marked FAILED, a visible
+    SystemIssue is created and the source gets a generic 500 (and may retry). Only the
+    exception class is recorded: messages from the database can contain submitted values.
+    """
+    delivery = session.get(RawInboundDelivery, delivery_id)
+    if delivery is None:
+        raise RuntimeError("delivery vanished after being stored")
+    try:
+        return process_delivery(session, delivery)
+    except Exception as exc:  # noqa: BLE001 - last line of defence for the ingress path
+        session.rollback()
+        name = type(exc).__name__
+        log.error("intake processing failed: %s (delivery %s)", name, delivery_id)
+        failed = session.get(RawInboundDelivery, delivery_id)
+        if failed is not None:
+            failed.parse_status = "FAILED"
+        session.add(SystemIssue(kind="INTAKE_PROCESSING_FAILED",
+                                detail=f"delivery {delivery_id}: {name}"))
+        audit(session, "DELIVERY_FAILED", SYSTEM_ACTOR, delivery_id=delivery_id, error=name)
+        session.commit()
+        return IntakeResult(500, {"error": "internal_error"})
