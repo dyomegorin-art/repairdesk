@@ -141,19 +141,49 @@ def test_health(client):
 
 
 def test_alembic_migration_matches_models(db_url):
+    """The migrated schema must equal the models: types, nullability, indexes, constraints."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
     backend = Path(__file__).resolve().parents[1]
     env = {"DATABASE_URL": db_url, "PATH": "/usr/bin:/usr/local/bin"}
     subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"],
                    cwd=backend, env=env, check=True, capture_output=True)
     from app.db import Base
     engine = create_engine(db_url)
-    insp = inspect(engine)
-    assert set(insp.get_table_names()) - {"alembic_version"} == set(Base.metadata.tables)
-    for name, table in Base.metadata.tables.items():
-        assert {c["name"] for c in insp.get_columns(name)} == {c.name for c in table.columns}, name
-    # the circular foreign keys exist on PostgreSQL
-    fks = {fk["name"] for fk in insp.get_foreign_keys("raw_inbound_delivery")}
+    with engine.connect() as conn:
+        diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
+    assert diff == [], diff
+    # the circular foreign keys exist
+    fks = {fk["name"] for fk in inspect(engine).get_foreign_keys("raw_inbound_delivery")}
     assert {"fk_delivery_event", "fk_delivery_duplicate_of"} <= fks
+    engine.dispose()
+
+
+def test_migrations_can_be_downgraded_to_empty_and_upgraded_again(db_url):
+    backend = Path(__file__).resolve().parents[1]
+    env = {"DATABASE_URL": db_url, "PATH": "/usr/bin:/usr/local/bin"}
+    for args in (["upgrade", "head"], ["downgrade", "base"], ["upgrade", "head"]):
+        subprocess.run([sys.executable, "-m", "alembic", *args],
+                       cwd=backend, env=env, check=True, capture_output=True)
+    engine = create_engine(db_url)
+    assert "repair_case" in inspect(engine).get_table_names()
+    engine.dispose()
+
+
+def test_indexes_exist_on_the_filtered_columns(db_url):
+    from app.db import Base
+
+    engine = create_engine(db_url)
+    Base.metadata.create_all(engine)
+    insp = inspect(engine)
+    indexed = {(t, tuple(ix["column_names"]))
+               for t in ("repair_case", "audit_event", "outbox_command")
+               for ix in insp.get_indexes(t)}
+    assert ("repair_case", ("case_phase",)) in indexed
+    assert ("repair_case", ("assigned_technician_id",)) in indexed
+    assert ("audit_event", ("case_id",)) in indexed
+    assert ("outbox_command", ("status",)) in indexed
     engine.dispose()
 
 

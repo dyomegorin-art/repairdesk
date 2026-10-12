@@ -62,7 +62,7 @@ class RepairCase(Base):
     __tablename__ = "repair_case"
 
     case_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    case_phase: Mapped[str] = mapped_column(String(32), default="INTAKE")
+    case_phase: Mapped[str] = mapped_column(String(32), default="INTAKE", index=True)
     intake_status: Mapped[str] = mapped_column(String(32), default="NEW")
     eligibility_result: Mapped[str | None] = mapped_column(String(32), nullable=True)
     intake_event_id: Mapped[str | None] = mapped_column(
@@ -71,7 +71,9 @@ class RepairCase(Base):
     source_attribution: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # Set by the (future) assignment workflow; in v0.1 only by seed/DB.
     assigned_technician_id: Mapped[str | None] = mapped_column(
-        ForeignKey("identity.identity_id", name="fk_case_assigned_technician"), nullable=True
+        ForeignKey("identity.identity_id", name="fk_case_assigned_technician"),
+        nullable=True,
+        index=True,
     )
     contact_display_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     contact_phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -95,7 +97,7 @@ class AuditEvent(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     case_id: Mapped[str | None] = mapped_column(
-        ForeignKey("repair_case.case_id"), nullable=True
+        ForeignKey("repair_case.case_id"), nullable=True, index=True
     )
     event_type: Mapped[str] = mapped_column(String(64))
     actor: Mapped[str] = mapped_column(String(64))
@@ -109,7 +111,7 @@ class OutboxCommand(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     command: Mapped[str] = mapped_column(String(64))
     case_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="PENDING")
+    status: Mapped[str] = mapped_column(String(16), default="PENDING", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
