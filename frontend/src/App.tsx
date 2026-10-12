@@ -37,6 +37,7 @@ const EVENT_LABEL: Record<string, string> = {
   CASE_CREATED: "Кейс создан",
   WORK_ITEM_CREATED: "Создана задача на проверку",
   DUPLICATE_IGNORED: "Повтор проигнорирован",
+  IDEMPOTENCY_CONFLICT: "Конфликт: тот же ключ, другое содержимое",
   INTAKE_STATUS_CHANGED: "Статус изменён",
   WORKER_COMMAND_COMPLETED: "Worker: проверка записи",
   WORKER_COMMAND_RETRY: "Worker: повтор запланирован",
