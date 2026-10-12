@@ -15,6 +15,7 @@ from app.models import (
     OutboxCommand,
     RawInboundDelivery,
     RepairCase,
+    WorkItem,
 )
 from app.worker import process_pending
 from tests.conftest import (
@@ -176,3 +177,75 @@ def test_concurrent_duplicate_deliveries_create_one_case(app, payload):
     assert count(app, IntakeEvent) == 1
     assert count(app, RawInboundDelivery) == 8
     assert count(app, RepairCase) == SEEDED_CASES + 1
+
+
+def _pending_commands_for(app, client, payload):
+    case_id = post_intake(client, payload).json()["case_id"]
+    return case_id
+
+
+def test_a_locked_command_is_skipped_not_waited_on(client, app, payload):
+    from sqlalchemy import text
+
+    _pending_commands_for(app, client, payload)  # creates two pending commands
+    holder = app.state.sessionmaker()
+    other = app.state.sessionmaker()
+    try:
+        # worker A has claimed the first command and has not finished yet
+        claimed = holder.scalars(select(OutboxCommand).order_by(OutboxCommand.id).limit(1)
+                                 .with_for_update()).first()
+        assert claimed is not None
+        other.execute(text("SET lock_timeout = '3s'"))  # a blocking worker would fail here
+        assert process_pending(other) == 1  # only the other command; the locked one is skipped
+        assert other.get(OutboxCommand, claimed.id).status == "PENDING"
+    finally:
+        holder.rollback()
+        other.rollback()
+    with app.state.sessionmaker() as s:
+        assert process_pending(s) == 1  # worker A "crashed": the command is picked up later
+        assert {c.status for c in s.scalars(select(OutboxCommand))} == {"DONE"}
+    holder.close()
+    other.close()
+
+
+def test_two_workers_never_run_the_same_command_twice(client, app, payload):
+    from concurrent.futures import ThreadPoolExecutor
+
+    case_id = _pending_commands_for(app, client, payload)
+    with app.state.sessionmaker() as s:
+        s.add_all(OutboxCommand(command="CREATE_REVIEW_ITEM", case_id=case_id) for _ in range(40))
+        s.commit()
+
+    def work(_):
+        with app.state.sessionmaker() as session:
+            return process_pending(session)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        total = sum(pool.map(work, range(2)))
+    assert total == 42  # 40 + the 2 created at intake, each processed exactly once
+    with app.state.sessionmaker() as s:
+        assert {c.status for c in s.scalars(select(OutboxCommand))} == {"DONE"}
+        assert {c.attempts for c in s.scalars(select(OutboxCommand))} == {1}
+        review_items = s.scalars(select(WorkItem).where(WorkItem.kind == "REVIEW_INTAKE")).all()
+        assert len(review_items) == 1 + 40  # the intake item plus one per command, no duplicates
+
+
+def test_batch_limit_caps_one_pass(client, app, payload):
+    _pending_commands_for(app, client, payload)
+    with app.state.sessionmaker() as s:
+        assert process_pending(s, limit=1) == 1
+        assert [c.status for c in s.scalars(select(OutboxCommand).order_by(OutboxCommand.id))] == [
+            "DONE", "PENDING"]
+
+
+def test_failure_audit_is_attached_to_the_case_when_it_exists(client, app, payload):
+    case_id = _pending_commands_for(app, client, payload)
+    with app.state.sessionmaker() as s:
+        s.add(OutboxCommand(command="NO_SUCH_COMMAND", case_id=case_id))
+        s.commit()
+        process_pending(s)
+        failed = s.scalars(select(AuditEvent).where(
+            AuditEvent.event_type == "WORKER_COMMAND_FAILED")).one()
+        assert failed.case_id == case_id
+    timeline = client.get(f"/api/cases/{case_id}/audit", headers=as_identity("disp-1")).json()
+    assert "WORKER_COMMAND_FAILED" in [e["event_type"] for e in timeline]

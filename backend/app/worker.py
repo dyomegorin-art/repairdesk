@@ -64,11 +64,28 @@ def _run(session: Session, cmd: OutboxCommand) -> dict:
     return handler(session, case)
 
 
-def process_pending(session: Session) -> int:
-    commands = session.scalars(
-        select(OutboxCommand).where(OutboxCommand.status == "PENDING").order_by(OutboxCommand.id)
-    ).all()
-    for cmd in commands:
+BATCH_LIMIT = 100
+
+
+def _claim_next(session: Session) -> OutboxCommand | None:
+    """Lock one pending command. SKIP LOCKED lets several workers run side by side:
+    a command another worker is processing is simply passed over."""
+    return session.scalars(
+        select(OutboxCommand)
+        .where(OutboxCommand.status == "PENDING")
+        .order_by(OutboxCommand.id)
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    ).first()
+
+
+def process_pending(session: Session, limit: int = BATCH_LIMIT) -> int:
+    """Process up to `limit` commands, one at a time: claim, run, commit (releases the lock)."""
+    processed = 0
+    while processed < limit:
+        cmd = _claim_next(session)
+        if cmd is None:
+            break
         cmd.attempts += 1
         try:
             with session.begin_nested():
@@ -82,9 +99,13 @@ def process_pending(session: Session) -> int:
             session.add(
                 SystemIssue(kind="WORKER_COMMAND_FAILED", detail=str(exc), command_id=cmd.id)
             )
-            audit(session, "WORKER_COMMAND_FAILED", ACTOR, command=cmd.command, error=str(exc))
+            # Attach the failure to the case timeline when the case exists (FK safe).
+            case_id = cmd.case_id if cmd.case_id and session.get(RepairCase, cmd.case_id) else None
+            audit(session, "WORKER_COMMAND_FAILED", ACTOR, case_id=case_id,
+                  command=cmd.command, error=str(exc))
         session.commit()
-    return len(commands)
+        processed += 1
+    return processed
 
 
 def main() -> None:
