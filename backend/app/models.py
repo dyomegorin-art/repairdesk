@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -29,7 +29,8 @@ class RawInboundDelivery(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    raw_body: Mapped[str] = mapped_column(Text)
+    # Exact bytes as received: never decoded or altered before parsing.
+    raw_body: Mapped[bytes] = mapped_column(LargeBinary)
     parse_status: Mapped[str] = mapped_column(String(32), default="PENDING")
     # use_alter: raw_inbound_delivery and intake_event reference each other.
     intake_event_id: Mapped[str | None] = mapped_column(

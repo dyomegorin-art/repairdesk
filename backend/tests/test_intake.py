@@ -106,3 +106,27 @@ def test_unset_server_key_fails_closed(db_url, payload):
     app = build_app(make_settings(db_url, intake_webhook_key=""))
     r = post_intake(TestClient(app), payload, key="")
     assert r.status_code == 401
+
+
+def test_raw_body_is_stored_byte_for_byte(client, app, payload):
+    odd = b'  {"b":1,\n "source_system":"website_form", "source_event_id":"e1",' \
+          b' "idempotency_key":"k1"}  '
+    assert post_intake(client, odd).status_code == 202
+    with app.state.sessionmaker() as s:
+        assert s.scalars(select(RawInboundDelivery)).one().raw_body == odd
+
+
+@pytest.mark.parametrize("body", [
+    b'{"source_system": "a\x00b"}',                 # raw NUL byte
+    b'{"source_system": "caf\xe9"}',                # not valid UTF-8
+    b"[" * 200000,                                  # nesting deep enough to hit the recursion limit
+])
+def test_hostile_bodies_are_kept_unchanged_and_rejected_with_400(client, app, body):
+    r = post_intake(client, body)
+    assert r.status_code == 400
+    assert r.json() == {"error": "invalid_json"}
+    with app.state.sessionmaker() as s:
+        delivery = s.scalars(select(RawInboundDelivery)).one()
+        assert delivery.raw_body == body
+        assert delivery.parse_status == "INVALID_JSON"
+    assert count(app, IntakeEvent) == 0

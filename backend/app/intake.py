@@ -30,7 +30,7 @@ class IntakeResult:
 
 def store_raw_delivery(session: Session, raw: bytes) -> RawInboundDelivery:
     """Persist an authenticated delivery before anything is parsed (docs/SPEC.md, 2.3)."""
-    delivery = RawInboundDelivery(raw_body=raw.decode("utf-8", errors="replace"))
+    delivery = RawInboundDelivery(raw_body=raw)
     session.add(delivery)
     session.flush()
     audit(session, "DELIVERY_RECEIVED", SYSTEM_ACTOR, delivery_id=delivery.id)
@@ -75,7 +75,7 @@ def _duplicate(session: Session, delivery: RawInboundDelivery, event: IntakeEven
 def process_delivery(session: Session, delivery: RawInboundDelivery) -> IntakeResult:
     try:
         payload = json.loads(delivery.raw_body)
-    except ValueError:
+    except (ValueError, RecursionError):  # includes invalid UTF-8 and too-deep nesting
         return _reject(session, delivery, "INVALID_JSON", {"error": "invalid_json"})
     if not isinstance(payload, dict):
         return _reject(session, delivery, "INVALID_JSON", {"error": "invalid_json"})
