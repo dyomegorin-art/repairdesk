@@ -14,5 +14,8 @@ COPY backend/alembic ./alembic
 COPY backend/alembic.ini ./
 RUN pip install --no-cache-dir .
 COPY --from=pwa /pwa/dist ./static
+# Run as an unprivileged user: the app only reads its own files and talks to PostgreSQL.
+RUN useradd --system --no-create-home --uid 10001 app
+USER app
 EXPOSE 8000
 CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
